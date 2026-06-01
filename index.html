@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Barista Check-In</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 50px 20px;
+            background-color: #f4f4f9;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 100%;
+            max-width: 350px;
+        }
+        input {
+            font-size: 24px;
+            padding: 10px;
+            width: 80%;
+            text-align: center;
+            margin: 20px 0;
+            border: 2px solid #ccc;
+            border-radius: 5px;
+        }
+        
+        button {
+            color: white;
+            font-size: 18px;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        
+        .btn-check { background-color: #007bff; }
+        .btn-in { background-color: #28a745; }
+        .btn-out { background-color: #fd7e14; }
+        .btn-disabled { 
+            background-color: #6c757d; 
+            cursor: not-allowed; 
+            opacity: 0.7;
+        }
+
+        #status { margin-top: 20px; font-weight: bold; }
+        
+        #actionArea {
+            display: none;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px dashed #ccc;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>One Shot Cafe</h2>
+        <p>Enter your 4-digit PIN to check your shift status.</p>
+        
+        <input type="password" id="pinCode" placeholder="Enter 4-digit PIN" maxlength="4">
+        <button class="btn-check" id="checkBtn" onclick="checkShiftStatus()">Check Status</button>
+        
+        <div id="status"></div>
+
+        <div id="actionArea">
+            <h3 id="employeeGreeting"></h3>
+            <button id="mainActionBtn"></button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyD_vNSr-e-GXyyf3Pcyg_umWCwdIPpGIZI", 
+            authDomain: "one-shot-cafe.firebaseapp.com",
+            databaseURL: "https://one-shot-cafe-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "one-shot-cafe",
+            storageBucket: "one-shot-cafe.firebasestorage.app",
+            messagingSenderId: "24110928727",
+            appId: "1:24110928727:web:c905cc5eee46b84559a412"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        const SHOP_LAT = 11.5717; 
+        const SHOP_LNG = 104.8931;
+        const MAX_DISTANCE_METERS = 50; 
+
+        // UPDATED: Shift end time is now set to 22 (10:00 PM)
+        const SHIFT_END_HOUR = 22; 
+        const SHIFT_END_MINUTE = 0;
+
+        const EMPLOYEES = {
+            "1234": "Mo",
+        };
+
+        let currentAction = "";
+        let currentEmployee = "";
+        let currentPin = "";
+
+        window.checkShiftStatus = async function() {
+            const pin = document.getElementById('pinCode').value;
+            const statusDiv = document.getElementById('status');
+            const actionArea = document.getElementById('actionArea');
+            const actionBtn = document.getElementById('mainActionBtn');
+            const greeting = document.getElementById('employeeGreeting');
+
+            actionArea.style.display = "none";
+            statusDiv.innerText = "Checking database...";
+            statusDiv.style.color = "blue";
+
+            if (pin.length !== 4) {
+                statusDiv.innerText = "Please enter a valid 4-digit PIN.";
+                statusDiv.style.color = "red";
+                return;
+            }
+
+            const employeeName = EMPLOYEES[pin];
+            if (!employeeName) {
+                statusDiv.innerText = "Error: PIN not recognized.";
+                statusDiv.style.color = "red";
+                return;
+            }
+
+            try {
+                const q = query(collection(db, "time_logs"), where("pin_code", "==", pin));
+                const querySnapshot = await getDocs(q);
+                
+                const todayDateString = new Date().toDateString();
+                let todayLogs = [];
+
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    const logDate = new Date(data.timestamp).toDateString();
+                    if (logDate === todayDateString) {
+                        todayLogs.push(data);
+                    }
+                });
+
+                greeting.innerText = `Hello, ${employeeName}!`;
+                actionArea.style.display = "block";
+                statusDiv.innerText = "";
+                
+                currentPin = pin;
+                currentEmployee = employeeName;
+
+                const hasClockedOutToday = todayLogs.some(log => log.action === "Clocked Out");
+
+                if (todayLogs.length === 0) {
+                    currentAction = "Clocked In";
+                    actionBtn.innerText = "Clock In";
+                    actionBtn.className = "btn-in";
+                    actionBtn.disabled = false;
+                    actionBtn.onclick = processAction;
+                } else if (!hasClockedOutToday) {
+                    currentAction = "Clocked Out";
+                    actionBtn.innerText = "Clock Out";
+                    actionBtn.className = "btn-out";
+                    actionBtn.disabled = false;
+                    actionBtn.onclick = processAction;
+                } else {
+                    currentAction = "Done";
+                    actionBtn.innerText = "Shift Completed";
+                    actionBtn.className = "btn-disabled";
+                    actionBtn.disabled = true;
+                    actionBtn.onclick = null;
+                }
+
+            } catch (error) {
+                console.error(error);
+                statusDiv.innerText = "Database error. Check connection.";
+                statusDiv.style.color = "red";
+            }
+        };
+
+        window.processAction = function() {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerText = "Verifying location...";
+            statusDiv.style.color = "black";
+
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => submitToFirebase(position),
+                    (error) => {
+                        statusDiv.innerText = "Error: Allow location access to proceed.";
+                        statusDiv.style.color = "red";
+                    }
+                );
+            } else {
+                statusDiv.innerText = "Geolocation not supported.";
+            }
+        }
+
+        async function submitToFirebase(position) {
+            const userLat = position.coords.latitude;
+            const userLng = position.coords.longitude;
+            const statusDiv = document.getElementById('status');
+            const actionBtn = document.getElementById('mainActionBtn');
+
+            const distance = calculateDistance(SHOP_LAT, SHOP_LNG, userLat, userLng);
+
+            if (distance <= MAX_DISTANCE_METERS) {
+                statusDiv.innerText = "Saving to database...";
+                statusDiv.style.color = "blue";
+                
+                try {
+                    const now = new Date();
+                    let isLateIn = false;
+                    let overtimeString = null;
+
+                    if (currentAction === "Clocked In") {
+                        const currentHour = now.getHours();
+                        const currentMinute = now.getMinutes();
+                        if (currentHour > 8 || (currentHour === 8 && currentMinute > 10)) {
+                            isLateIn = true;
+                        }
+                    }
+
+                    if (currentAction === "Clocked Out") {
+                        const shiftEnd = new Date();
+                        shiftEnd.setHours(SHIFT_END_HOUR, SHIFT_END_MINUTE, 0, 0);
+                        
+                        if (now > shiftEnd) {
+                            const diffMs = now - shiftEnd;
+                            const diffMins = Math.floor(diffMs / 60000);
+                            const hours = Math.floor(diffMins / 60);
+                            const minutes = diffMins % 60;
+                            
+                            if (hours > 0) {
+                                overtimeString = `${hours} hr ${minutes} mins`;
+                            } else {
+                                overtimeString = `${minutes} mins`;
+                            }
+                        }
+                    }
+
+                    await addDoc(collection(db, "time_logs"), {
+                        pin_code: currentPin,
+                        name: currentEmployee,
+                        timestamp: now.toISOString(),
+                        action: currentAction,
+                        isLate: isLateIn,
+                        lateOutDuration: overtimeString 
+                    });
+                    
+                    statusDiv.innerText = `Success! You have ${currentAction}.`;
+                    statusDiv.style.color = "green";
+                    
+                    actionBtn.innerText = "Action Recorded";
+                    actionBtn.className = "btn-disabled";
+                    actionBtn.disabled = true;
+                    document.getElementById('pinCode').value = ''; 
+                    
+                } catch (error) {
+                    console.error("Firebase Error: ", error);
+                    statusDiv.innerText = "Database error. Please try again.";
+                    statusDiv.style.color = "red";
+                }
+            } else {
+                statusDiv.innerText = `Too far away (${Math.round(distance)}m). You must be at the shop!`;
+                statusDiv.style.color = "red";
+            }
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; 
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; 
+        }
+    </script>
+</body>
+</html>

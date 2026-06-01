@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manager Dashboard</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            background-color: #f4f4f9; 
+            padding: 20px; 
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        h2 { text-align: center; color: #333; }
+        
+        .month-section {
+            margin-top: 30px;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 2px dashed #ccc;
+        }
+        
+        .month-title {
+            color: #2c3e50;
+            font-size: 22px;
+            border-bottom: 3px solid #007bff;
+            display: inline-block;
+            margin-bottom: 15px;
+            padding-bottom: 5px;
+        }
+
+        .summary-box {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 5px solid #ffc107;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            line-height: 1.6;
+        }
+        
+        .card { 
+            background: white; 
+            padding: 15px; 
+            margin-bottom: 15px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+            border-left: 5px solid #28a745; 
+        }
+        
+        .card.clocked-out { border-left: 5px solid #fd7e14; }
+        
+        .name { font-size: 18px; font-weight: bold; color: #000; display: flex; justify-content: space-between; align-items: center;}
+        .time { color: #555; font-size: 14px; margin-top: 5px; }
+        
+        .action { font-size: 14px; font-weight: bold; color: #28a745; margin-top: 5px;}
+        .action.out { color: #fd7e14; }
+        
+        .late-badge {
+            background-color: #dc3545;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .overtime-badge {
+            background-color: #6f42c1; /* Purple for overtime */
+            color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        button { 
+            background-color: #007bff; 
+            color: white; 
+            padding: 15px; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            width: 100%; 
+            font-size: 16px; 
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Manager Dashboard</h2>
+    <button onclick="loadLogs()">Refresh Live Data</button>
+    
+    <div id="dashboard-content">Loading database...</div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyD_vNSr-e-GXyyf3Pcyg_umWCwdIPpGIZI", 
+            authDomain: "one-shot-cafe.firebaseapp.com",
+            databaseURL: "https://one-shot-cafe-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "one-shot-cafe",
+            storageBucket: "one-shot-cafe.firebasestorage.app",
+            messagingSenderId: "24110928727",
+            appId: "1:24110928727:web:c905cc5eee46b84559a412"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        window.loadLogs = async function() {
+            const dashboardDiv = document.getElementById('dashboard-content');
+            dashboardDiv.innerHTML = "Fetching latest check-ins...";
+            
+            try {
+                const q = query(collection(db, "time_logs"), orderBy("timestamp", "desc"));
+                const querySnapshot = await getDocs(q);
+                
+                if (querySnapshot.empty) {
+                    dashboardDiv.innerHTML = "<p style='text-align:center;'>No check-ins found yet.</p>";
+                    return;
+                }
+
+                const groupedData = {};
+
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    const dateObj = new Date(data.timestamp);
+                    
+                    const monthYearLabel = dateObj.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+                    if (!groupedData[monthYearLabel]) {
+                        groupedData[monthYearLabel] = { lateCounts: {}, logsHtml: "" };
+                    }
+
+                    const exactTime = dateObj.toLocaleString('en-US', { 
+                        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+                        hour: 'numeric', minute: '2-digit', hour12: true 
+                    });
+                    
+                    const displayName = data.name ? data.name : `PIN: ${data.pin_code}`;
+                    const actionText = data.action || "Clocked In";
+                    const isClockOut = actionText === "Clocked Out";
+                    
+                    // Count Late Clock-Ins
+                    if (data.isLate && !isClockOut) {
+                        groupedData[monthYearLabel].lateCounts[displayName] = (groupedData[monthYearLabel].lateCounts[displayName] || 0) + 1;
+                    }
+
+                    const cardClass = isClockOut ? "card clocked-out" : "card";
+                    const actionClass = isClockOut ? "action out" : "action";
+                    
+                    // Generate Badges
+                    const lateInBadgeHtml = (data.isLate && !isClockOut) ? `<span class="late-badge">LATE</span>` : "";
+                    const overtimeBadgeHtml = (isClockOut && data.lateOutDuration) ? `<span class="overtime-badge">Late Out: ${data.lateOutDuration}</span>` : "";
+
+                    groupedData[monthYearLabel].logsHtml += `
+                        <div class="${cardClass}">
+                            <div class="name">
+                                ${displayName} 
+                                <div>${lateInBadgeHtml} ${overtimeBadgeHtml}</div>
+                            </div>
+                            <div class="${actionClass}">Status: ${actionText}</div>
+                            <div class="time">🕒 ${exactTime}</div>
+                        </div>
+                    `;
+                });
+
+                let finalDashboardHtml = "";
+
+                for (const [monthYear, monthData] of Object.entries(groupedData)) {
+                    let summaryHtml = `<strong>Late Check-In Report for ${monthYear}:</strong><br>`;
+                    
+                    if (Object.keys(monthData.lateCounts).length === 0) {
+                        summaryHtml += "Everyone was on time this month!<br>";
+                    } else {
+                        for (const [employee, count] of Object.entries(monthData.lateCounts)) {
+                            summaryHtml += `• ${employee}: Late <strong>${count}</strong> time(s)<br>`;
+                        }
+                    }
+
+                    finalDashboardHtml += `
+                        <div class="month-section">
+                            <div class="month-title">${monthYear}</div>
+                            <div class="summary-box">${summaryHtml}</div>
+                            <div class="logs-container">${monthData.logsHtml}</div>
+                        </div>
+                    `;
+                }
+
+                dashboardDiv.innerHTML = finalDashboardHtml;
+
+            } catch (error) {
+                console.error(error);
+                dashboardDiv.innerHTML = "<p style='color:red; text-align:center;'>Error loading database. Please check your connection.</p>";
+            }
+        };
+
+        window.onload = loadLogs;
+    </script>
+</body>
+</html>
